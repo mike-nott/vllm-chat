@@ -240,7 +240,8 @@ if sub:
     with stop_slot.container():   # swap the send arrow for a stop square while streaming
         st.markdown(f"""<style>[data-testid="stChatInputSubmitButton"] {{visibility: hidden;}}
 .st-key-stop {{position: fixed; z-index: 1001; width: auto; opacity: 0;}}
-.st-key-stop button {{width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 50%; border: none; background: {P['accent']}; color: {P['accent_fg']}; font-size: 0.8rem; line-height: 1;}}
+.st-key-stop button, .st-key-stop button:hover, .st-key-stop button:focus, .st-key-stop button:active {{width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 50%; border: none !important; background: {P['accent']} !important; color: {P['accent_fg']} !important; font-size: 0.8rem; line-height: 1; box-shadow: none !important;}}
+.st-key-stop button * {{color: {P['accent_fg']} !important;}}
 </style>""", unsafe_allow_html=True)
         st.button("■", key="stop", help="Stop generating")
         components.html("""<script>
