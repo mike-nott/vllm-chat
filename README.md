@@ -6,14 +6,14 @@ no database, no accounts, nothing logged. Point it at `http://<host>:8000`, open
 ![light](docs/shot-light.png)
 
 Built for testing models on home inference boxes (DGX Spark, RTX rigs) where you want a quick, clean UI rather than a
-full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint; the extras (reasoning effort, thinking
-toggle, cache-hit %) light up when the server is vLLM.
+full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint; the extras (thinking level,
+cache-hit %) light up when the server is vLLM.
 
 ## Features
 
 - Streaming replies with a stop button in the composer, "Thought for Ns" expander for reasoning models
 - Image attachments (＋ in the composer) for vision models
-- Model-family profiles: GLM reasoning effort Low/High/Max, Qwen thinking on/off, generic. Guessed from the model id, or set per server
+- Model-family profiles with a Thinking level control: GLM Low/High/Max, Qwen Off/Low/Medium/XHigh, generic. Guessed from the model id, or set per server
 - Max tokens, temperature, top-p, optional system prompt
 - Timing line per reply: time to first token, tok/s, prefix-cache hit % (from vLLM `/metrics`)
 - Raw view: the exact request JSON and response summary under each reply
@@ -53,8 +53,8 @@ base_url = "http://192.168.1.11:8000"
 
 | profile | sidebar control | what is sent |
 |---|---|---|
-| `glm` | Reasoning effort Low / High / Max | `chat_template_kwargs.reasoning_effort`, prior reasoning passed back as `reasoning` |
-| `qwen` | Thinking on / off | `chat_template_kwargs.enable_thinking`, prior reasoning passed back |
+| `glm` | Thinking level Low / High / Max | `chat_template_kwargs.reasoning_effort`, prior reasoning passed back as `reasoning` |
+| `qwen` | Thinking level Off / Low / Medium / XHigh | `chat_template_kwargs.enable_thinking` (Off = `false`) and `reasoning_effort` for the other levels, prior reasoning passed back |
 | `generic` | none | plain OpenAI chat |
 
 `servers.toml` is git-ignored, so `git pull` never overwrites it. The app re-reads it on every page load.
@@ -80,7 +80,8 @@ url = "https://your-worker.example.workers.dev/mcp"
 token = "your-bearer-token"
 ```
 
-A **Web MCP** toggle appears in the sidebar (off by default, glm/qwen profiles only). When on, the server's tools are
+The **Web MCP** toggle is always in the sidebar, off by default. Without an `[mcp]` section it is greyed out with a
+tooltip saying what to add; it also stays greyed out for the `generic` profile. When on, the server's tools are
 passed as OpenAI `tools` with `tool_choice: auto`; streamed tool calls are executed over MCP Streamable HTTP and fed
 back as `role: tool` messages, up to 6 rounds. Every call, its arguments and its result sit in one collapsed
 **Tools · N calls** row above the reply. Any MCP endpoint that speaks Streamable HTTP with bearer auth and returns text
@@ -107,8 +108,8 @@ use one, lives in plain text in `servers.toml`, which is git-ignored for that re
 ## Troubleshooting
 
 - Red dot, "server unreachable": `curl <base_url>/v1/models` from the box running vllm-chat.
-- No Reasoning effort / Thinking control: the profile was guessed as `generic`. Set `profile` explicitly.
-- Web MCP toggle missing: no `[mcp]` section, or the profile is `generic`. "web-mcp unavailable": bad url or token.
+- No Thinking level control: the profile was guessed as `generic`. Set `profile` explicitly.
+- Web MCP toggle greyed out: no `[mcp]` section (hover it for the hint), or the profile is `generic`. "web-mcp unavailable": bad url or token.
 - Port 80 already in use: `PORT=8501 bash install.sh`.
 - Edits to `app.py` not showing: `watchdog` is not installed in the streamlit environment; install it and restart.
 
