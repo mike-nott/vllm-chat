@@ -11,11 +11,12 @@ if os.path.exists(CFG_PATH):
 else:                                   # quick start: no servers.toml → vLLM on localhost
     CFG = {"title": "vLLM", "servers": [{"name": "local vLLM", "base_url": os.environ.get("VLLM_URL", "http://127.0.0.1:8000")}]}
 SERVERS = CFG["servers"]                      # [{name, base_url, profile}]
-PROFILES = {                                  # what the model family understands
-    "glm":     dict(effort=True,  thinking_toggle=False, passback="reasoning"),
-    "qwen":    dict(effort=False, thinking_toggle=True,  passback="reasoning"),
-    "generic": dict(effort=False, thinking_toggle=False, passback=None),
+PROFILES = {                                  # what the model family understands; effort = the levels its chat template accepts
+    "glm":     dict(effort=["low", "high", "max"],     effort_default="low",    thinking_toggle=False, passback="reasoning"),
+    "qwen":    dict(effort=["low", "medium", "xhigh"], effort_default="medium", thinking_toggle=True,  passback="reasoning"),   # Qwen3.8: anything else is a 400
+    "generic": dict(effort=None,                       effort_default=None,     thinking_toggle=False, passback=None),
 }
+EFFORT_LABEL = {"xhigh": "XHigh"}             # display names where capitalize() is wrong
 MCP_CFG = CFG.get("mcp")                      # optional [mcp] url + token → web tools, OFF by default
 MAX_TOOL_ROUNDS = 6
 
@@ -154,7 +155,9 @@ with st.sidebar:
     with st.expander("System prompt" + (" ●" if ss.system.strip() else ""), expanded=False):
         ss.system = st.text_area("System prompt", ss.system, height=120, label_visibility="collapsed")
     if PROF["effort"]:
-        eff = st.segmented_control("Reasoning effort", ["low", "high", "max"], default=ss.effort, key="effort_ctl", format_func=str.capitalize)
+        if ss.effort not in PROF["effort"]: ss.effort = PROF["effort_default"]     # levels differ per profile
+        eff = st.segmented_control("Reasoning effort", PROF["effort"], default=ss.effort, key=f"effort_ctl_{prof_name}",
+                                   format_func=lambda v: EFFORT_LABEL.get(v, v.capitalize()))
         if eff: ss.effort = eff
     if PROF["thinking_toggle"]: ss.thinking = st.toggle("Thinking", ss.thinking)
     ss.max_tokens = st.select_slider("Max tokens", [1024, 4096, 8192, 16384, 32768], value=ss.max_tokens)
@@ -162,8 +165,11 @@ with st.sidebar:
     ss.top_p = st.slider("Top-p", 0.1, 1.0, ss.top_p, 0.01)
     ss.show_meta = st.toggle("Show timing details", ss.show_meta)
     ss.raw = st.toggle("Raw view", ss.raw)
-    if MCP_CFG and PROF["passback"]:
-        ss.tools_on = st.toggle("Web MCP", ss.tools_on)
+    # Web MCP is always present; greyed out until it can work, with the reason in the tooltip.
+    mcp_ready = bool(MCP_CFG and MCP_CFG.get("url") and MCP_CFG.get("token"))
+    mcp_why = None if (mcp_ready and PROF["passback"]) else ("Add the Cloudflare secret to activate: an [mcp] section with url and token in servers.toml" if not mcp_ready else "Not available for the generic profile")
+    if mcp_why: ss.tools_on = False
+    ss.tools_on = st.toggle("Web MCP", ss.tools_on, disabled=bool(mcp_why), help=mcp_why)
     mode = st.segmented_control("Appearance", ["light", "dark"], default=ss.mode, key="mode_ctl",
                                 format_func=lambda m: ":material/light_mode:" if m == "light" else ":material/dark_mode:", label_visibility="collapsed")
     if mode and mode != ss.mode: ss.mode = mode; st.rerun()
