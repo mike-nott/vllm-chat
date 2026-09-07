@@ -63,7 +63,7 @@ def elide(body):
 st.set_page_config(page_title=CFG.get("title", "vLLM"), page_icon="⚡", layout="centered", initial_sidebar_state="expanded")
 
 ss = st.session_state
-ss.setdefault("msgs", []); ss.setdefault("effort", "low"); ss.setdefault("temperature", 1.0); ss.setdefault("top_p", 0.95)
+ss.setdefault("msgs", []); ss.setdefault("effort", None); ss.setdefault("temperature", 1.0); ss.setdefault("top_p", 0.95)   # effort: set per profile below
 ss.setdefault("max_tokens", 4096); ss.setdefault("show_meta", False); ss.setdefault("server", SERVERS[0]["name"]); ss.setdefault("thinking", True); ss.setdefault("system", ""); ss.setdefault("raw", False); ss.setdefault("tools_on", False)
 ss.setdefault("mode", "dark" if st.query_params.get("dark") else "light")
 
@@ -155,11 +155,13 @@ with st.sidebar:
     with st.expander("System prompt" + (" ●" if ss.system.strip() else ""), expanded=False):
         ss.system = st.text_area("System prompt", ss.system, height=120, label_visibility="collapsed")
     if PROF["effort"]:
-        if ss.effort not in PROF["effort"]: ss.effort = PROF["effort_default"]     # levels differ per profile
-        eff = st.segmented_control("Reasoning effort", PROF["effort"], default=ss.effort, key=f"effort_ctl_{prof_name}",
+        levels = (["off"] if PROF["thinking_toggle"] else []) + PROF["effort"]   # "Off" = thinking disabled, where the family supports it
+        if ss.effort not in levels: ss.effort = PROF["effort_default"]             # levels differ per profile
+        eff = st.segmented_control("Thinking level", levels, default=ss.effort, key=f"effort_ctl_{prof_name}",
                                    format_func=lambda v: EFFORT_LABEL.get(v, v.capitalize()))
         if eff: ss.effort = eff
-    if PROF["thinking_toggle"]: ss.thinking = st.toggle("Thinking", ss.thinking)
+        ss.thinking = ss.effort != "off"
+    elif PROF["thinking_toggle"]: ss.thinking = st.toggle("Thinking", ss.thinking)
     ss.max_tokens = st.select_slider("Max tokens", [1024, 4096, 8192, 16384, 32768], value=ss.max_tokens)
     ss.temperature = st.slider("Temperature", 0.0, 1.5, ss.temperature, 0.05)
     ss.top_p = st.slider("Top-p", 0.1, 1.0, ss.top_p, 0.01)
@@ -224,8 +226,8 @@ if sub:
         for f in files: st.image(f.getvalue(), width=260)
         st.markdown(text)
     kw = {}
-    if PROF["effort"]: kw["reasoning_effort"] = ss.effort
-    if PROF["thinking_toggle"]: kw["enable_thinking"] = ss.thinking
+    if PROF["effort"] and ss.effort != "off": kw["reasoning_effort"] = ss.effort
+    if PROF["thinking_toggle"]: kw["enable_thinking"] = ss.thinking       # a real JSON boolean; the string "false" would leave thinking ON
     tools = None
     if ss.tools_on and MCP_CFG:
         try:
