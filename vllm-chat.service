@@ -1,0 +1,17 @@
+# Rendered by install.sh (placeholders: __USER__, __DIR__, __STREAMLIT__, __PORT__). Port 80 works without root
+# because of AmbientCapabilities; for ports >= 1024 the capability line is harmless.
+[Unit]
+Description=vllm-chat (Streamlit front-end for local vLLM)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__STREAMLIT__ run app.py --server.port __PORT__ --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+servers.toml
+__pycache__/
+*.pyc
+.venv/

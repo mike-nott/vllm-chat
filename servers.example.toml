@@ -1,0 +1,23 @@
+# vllm-chat — copy to servers.toml and edit. Without a servers.toml the app talks to http://127.0.0.1:8000.
+# One [[servers]] block per vLLM server. The first is the default; a picker appears in the sidebar if there are several.
+# profile (optional, guessed from the model id if omitted):
+#   glm     → Reasoning effort Low/High/Max (chat_template_kwargs.reasoning_effort), prior reasoning passed back
+#   qwen    → Thinking on/off toggle        (chat_template_kwargs.enable_thinking),  prior reasoning passed back
+#   generic → plain OpenAI chat, no template kwargs
+title = "vLLM"
+
+[[servers]]
+name = "local"
+base_url = "http://127.0.0.1:8000"
+# profile = "generic"
+
+# [[servers]]
+# name = "GLM box"
+# base_url = "http://192.168.1.10:8000"
+# profile = "glm"
+
+# Optional: let the model call tools on an MCP server over Streamable HTTP (sidebar toggle "Web MCP", off by default).
+# Built for https://github.com/mike-nott/web-mcp but any bearer-token MCP endpoint with text tools works.
+# [mcp]
+# url = "https://your-worker.example.workers.dev/mcp"
+# token = "your-bearer-token"
