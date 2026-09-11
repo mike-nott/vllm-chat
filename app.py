@@ -86,7 +86,7 @@ html, body, .stApp, [data-testid="stSidebar"], .stMarkdown, button, input, texta
 [data-testid="stSidebarUserContent"] > div > div {{display: flex; flex-direction: column; min-height: calc(100vh - 6.2rem);}}
 .brand {{font-weight: 700; font-size: 1.6rem; letter-spacing: -0.02em; color: {P['text']}; display: flex; align-items: center; gap: 0.55rem; margin-top: -0.2rem;}}
 .brand .dot {{width: 0.62rem; height: 0.62rem; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 3px rgba(0,0,0,0.04);}}
-.dot.ok {{background: #34c759;}} .dot.bad {{background: #ff3b30;}}
+.dot.ok {{background: #34c759;}} .dot.warn {{background: #ff9f0a;}} .dot.bad {{background: #ff3b30;}}
 .model {{font-size: 0.72rem; color: {P['muted']}; margin: 0.25rem 0 1.6rem; word-break: break-all;}}
 .section {{font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: {P['muted']}; font-weight: 600; margin: 0.6rem 0 0.2rem;}}
 [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {{font-size: 0.82rem; font-weight: 500;}}
@@ -130,6 +130,20 @@ code {{background: {P['bubble']}; color: {P['text']};}} pre, [data-testid="stCod
 def model_id(base):
     return requests.get(f"{base}/v1/models", timeout=5).json()["data"][0]["id"]
 
+def probe(base):
+    """(state, model_id). state: ready | starting | offline. Decided from HOW the request fails, not just that it failed:
+    a refused connection means the host answers but nothing listens on the port yet (vLLM only opens it after the
+    engine has loaded, ~6 min on a Spark); a timeout / no route / DNS failure means the box itself is unreachable;
+    an HTTP error or a read timeout means the process is up but not serving yet."""
+    try:
+        return "ready", model_id(base)
+    except requests.exceptions.ConnectionError as e:
+        return ("starting", None) if "refused" in str(e).lower() else ("offline", None)
+    except Exception:
+        return "starting", None
+
+STATUS = {"ready": ("ok", "server ready"), "starting": ("warn", "server starting up"), "offline": ("bad", "server offline")}
+
 def cache_counters(base):
     h = q = 0.0
     try:
@@ -141,16 +155,17 @@ def cache_counters(base):
 
 with st.sidebar:
     SRV = next(x for x in SERVERS if x["name"] == ss.server); BASE = SRV["base_url"].rstrip("/")
-    try: MODEL = model_id(BASE); ok = True
-    except Exception: MODEL = "server unreachable"; ok = False
-    prof_name = SRV.get("profile") or ("glm" if "glm" in MODEL.lower() else "qwen" if "qwen" in MODEL.lower() else "generic")   # guess from the model id when not set
+    state, MODEL = probe(BASE); ok = state == "ready"; dot, label = STATUS[state]
+    prof_name = SRV.get("profile") or ("glm" if "glm" in (MODEL or "").lower() else "qwen" if "qwen" in (MODEL or "").lower() else "generic")   # guess from the model id when not set
     PROF = PROFILES.get(prof_name, PROFILES["generic"])
-    st.markdown(f'<div class="brand"><span class="dot {"ok" if ok else "bad"}" title="{"server healthy" if ok else "server unreachable"}"></span>{CFG.get("title", "vLLM")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="brand"><span class="dot {dot}" title="{label}"></span>{CFG.get("title", "vLLM")}</div>', unsafe_allow_html=True)
     if len(SERVERS) > 1:
         pick = st.selectbox("Server", [x["name"] for x in SERVERS], index=[x["name"] for x in SERVERS].index(ss.server), label_visibility="collapsed")
         if pick != ss.server: ss.server = pick; ss.msgs = []; st.rerun()
-    st.markdown(f'<div class="model">{MODEL}</div>', unsafe_allow_html=True)
-    if not ok: st.stop()
+    st.markdown(f'<div class="model">{MODEL or label}</div>', unsafe_allow_html=True)
+    if not ok:                                    # keep polling so the page turns green by itself when the server comes up
+        st.caption("checking again in 10 s")
+        time.sleep(10); st.rerun()
     st.markdown('<div class="section">Settings</div>', unsafe_allow_html=True)
     with st.expander("System prompt" + (" ●" if ss.system.strip() else ""), expanded=False):
         ss.system = st.text_area("System prompt", ss.system, height=120, label_visibility="collapsed")
