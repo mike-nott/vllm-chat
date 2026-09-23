@@ -46,6 +46,8 @@ base_url = "http://127.0.0.1:8000"
 # url = "http://127.0.0.1:8765/mcp"    # run: COMFY_MCP_HTTP_TOKEN=... comfy-mcp --http
 # token = "your-bearer-token"
 # timeout = 300                        # an image is 20-60 s; video hands back a job id to poll instead
+# With comfy-mcp's save_policy = "never", full-size results come back as Download buttons in the browser
+# and are never written to disk on the server.
 
 # Optional per-tool argument defaults, applied when the model leaves them out. Attaches to the
 # [[mcp]] block above it.

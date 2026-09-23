@@ -115,6 +115,13 @@ Tool results that carry images — a [comfy-mcp](https://github.com/mike-nott/co
 previews under that row. They are displayed, not sent back to the model: the model gets the text part, which for
 comfy-mcp includes the path the full-size file was saved to **on the machine running the MCP server**.
 
+To keep full-size files off that machine entirely, run comfy-mcp 0.2.2+ with `save_policy = "never"`. It then returns
+a one-shot `download: comfy://result/<token>` handle instead of saving. vllm-chat fetches each file straight away
+(`GET <mcp origin>/dl/<token>`, with the same bearer token), keeps the bytes in the browser session only, and shows a
+**Download** button under the preview. The model sees a "delivered to the user as a download" note, never the handle.
+Nothing reaches disk on either server; refresh the page and the files are gone. Since the fetch is server-side,
+comfy-mcp can stay on `127.0.0.1` when it runs on the same box as vllm-chat.
+
 Two servers it was built against: [web-mcp](https://github.com/mike-nott/web-mcp) (Reddit, X, YouTube, web search,
 page fetch) and [comfy-mcp](https://github.com/mike-nott/comfy-mcp) (Qwen Image 2.1, MiniMax H3 video), the latter
 started with `COMFY_MCP_HTTP_TOKEN=... comfy-mcp --http`. Any Streamable HTTP endpoint with bearer auth works.

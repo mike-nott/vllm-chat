@@ -1,7 +1,7 @@
 # vllm-chat — a small, stateless Streamlit front-end for local vLLM (OpenAI-compatible) servers.
 # https://github.com/mike-nott/vllm-chat
 # Stateless: session memory only, no files, no telemetry. Config: servers.toml next to this file.
-import base64, json, os, time, tomllib, requests, streamlit as st
+import base64, json, os, re, time, tomllib, urllib.parse, requests, streamlit as st
 import streamlit.components.v1 as components
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,14 +53,29 @@ class MCP:
         return m["result"] if m else None
     def tools(self): return self._rpc("tools/list", {})["tools"]
     def call(self, name, args):
-        """→ (text for the model, image data URLs for the page). Image blocks are shown, not sent: the tool caller is rarely the vision model."""
+        """→ (text for the model, image data URLs for the page, files for download buttons).
+        Image blocks are shown, not sent: the tool caller is rarely the vision model."""
         try:
             res = self._rpc("tools/call", {"name": name, "arguments": args})
             content = res.get("content", [])
             text = "\n".join(c.get("text", "") for c in content if c.get("type") == "text")
             imgs = [f"data:{c.get('mimeType', 'image/png')};base64,{c['data']}" for c in content if c.get("type") == "image" and c.get("data")]
-            return (text or ("" if imgs else json.dumps(res)[:6000])), imgs
-        except Exception as e: return f"tool error: {e}", []
+            text, files = self.downloads(text)
+            return (text or ("" if imgs else json.dumps(res)[:6000])), imgs, files
+        except Exception as e: return f"tool error: {e}", [], []
+    DOWNLOAD = re.compile(r"^download: comfy://result/(\S+)$", re.M)
+    def downloads(self, text):
+        """comfy-mcp (save_policy = "never") hands out one-shot handles. Fetch each now, with the bearer token, so the
+        bytes leave the MCP server within seconds; the model sees a note instead of the handle, so it cannot echo it."""
+        files, o = [], urllib.parse.urlsplit(self.url)
+        def grab(m):
+            try:
+                r = requests.get(f"{o.scheme}://{o.netloc}/dl/{m[1]}", headers={"Authorization": self.h["Authorization"]}, timeout=(10, self.timeout)); r.raise_for_status()
+                fn = re.search(r'filename="([^"]+)"', r.headers.get("content-disposition", "")); fn = fn[1] if fn else m[1]
+                files.append({"name": fn, "mime": r.headers.get("content-type", "application/octet-stream"), "data": r.content})
+                return f"({fn} delivered to the user as a download)"
+            except Exception as e: return f"(download failed: {e})"
+        return self.DOWNLOAD.sub(grab, text), files
 
 def openai_tools(mcp_tools):
     return [{"type": "function", "function": {"name": t["name"], "description": t.get("description", "")[:1200],
@@ -223,13 +238,15 @@ def tools_html(rounds):
             out.append(f'<details style="margin:0.15rem 0"><summary style="{summ}">🔧 {html.escape(sig)}</summary><div style="{box}">{esc(body)}</div></details>')
     return "".join(out)          # one HTML block, no blank lines: markdown must not split it
 
-def render_tools(rounds):
+def render_tools(rounds, live=False):
     n = sum(len(r.get("calls", [])) for r in rounds)
     if n:
         with st.expander(f"Tools · {n} call{'s' if n > 1 else ''}", expanded=False): st.markdown(tools_html(rounds), unsafe_allow_html=True)
     for r in rounds:                                  # media a tool returned (comfy-mcp previews) belongs in the conversation, not inside the expander
         for c in r.get("calls", []):
             for src in c.get("images") or []: st.image(src, width=360)
+            for i, f in enumerate(c.get("files") or []):          # buttons once the turn is done: the live slot redraws, a widget key can't repeat
+                if not live: st.download_button(f"Download {f['name']}", f["data"], f["name"], f["mime"], key=f"dl_{c['id']}_{i}", on_click="ignore", icon=":material/download:")
 
 for m in ss.msgs:
     with st.chat_message(m["role"]):
@@ -353,13 +370,13 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                     cli, argdef = dispatch.get(c["name"], (None, {}))
                     for k, v in argdef.items(): args.setdefault(k, v)
                     round_rec["calls"].append({"id": c["id"], "name": c["name"], "args": args, "result": None})
-                    with tools_slot.container(): render_tools(pending["rounds"] + [round_rec])      # show the call while it runs
-                    res, imgs = cli.call(c["name"], args) if cli else (f"tool error: no MCP server offers {c['name']}", [])
+                    with tools_slot.container(): render_tools(pending["rounds"] + [round_rec], live=True)      # show the call while it runs
+                    res, imgs, files = cli.call(c["name"], args) if cli else (f"tool error: no MCP server offers {c['name']}", [], [])
                     if res and len(res) > TOOL_RESULT_MAX_CHARS: res = res[:TOOL_RESULT_MAX_CHARS] + f"\n\n[truncated: {len(res)} chars, showing the first {TOOL_RESULT_MAX_CHARS}]"
-                    round_rec["calls"][-1].update(result=res, images=imgs)
+                    round_rec["calls"][-1].update(result=res, images=imgs, files=files)
                 think_slot.empty(); cslot.empty()
                 last_calls = calls; pending["rounds"].append(round_rec); pending["reasoning"] = ""; pending["content"] = ""
-                with tools_slot.container(): render_tools(pending["rounds"])
+                with tools_slot.container(): render_tools(pending["rounds"], live=True)
         except Exception as e:
             st.error(f"Something went wrong: {e}"); st.stop()
         end = time.time(); ct = stats.get("ct", 0)
