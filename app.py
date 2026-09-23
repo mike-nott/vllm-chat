@@ -17,8 +17,11 @@ PROFILES = {                                  # what the model family understand
     "generic": dict(effort=None,                       effort_default=None,     thinking_toggle=False, passback=None),
 }
 EFFORT_LABEL = {"xhigh": "XHigh"}             # display names where capitalize() is wrong
+PASSBACK_KEY = lambda srv, prof: srv.get("reasoning_key") or prof["passback"]   # servers.toml reasoning_key overrides the profile (llama-server: "reasoning_content")
 MCP_CFG = CFG.get("mcp")                      # optional [mcp] url + token → web tools, OFF by default
 MAX_TOOL_ROUNDS = 6
+TOOL_RESULT_MAX_CHARS = int(CFG.get("tool_result_max_chars", 12000))   # cap what goes back to the model: prompt processing is the slow part on small boxes
+TOOL_ARG_DEFAULTS = {"fetch_page": {"max_chars": 10000}}               # per-tool defaults applied when the model omits them
 
 class MCP:
     """Minimal MCP Streamable-HTTP client (JSON or SSE responses)."""
@@ -272,11 +275,11 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                 if m is pending and not m.get("rounds"): continue        # the turn being generated: only its finished tool rounds go on the wire
                 for r in m.get("rounds", []):
                     am = {"role": "assistant", "content": "", "tool_calls": [{"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": json.dumps(c["args"])}} for c in r["calls"]]}
-                    if r.get("reasoning") and PROF["passback"]: am[PROF["passback"]] = r["reasoning"]
+                    if r.get("reasoning") and PASSBACK_KEY(SRV, PROF): am[PASSBACK_KEY(SRV, PROF)] = r["reasoning"]
                     w.append(am); w += [{"role": "tool", "tool_call_id": c["id"], "content": c.get("result") or ""} for c in r["calls"]]
                 if m is not pending and (m.get("content") or not m.get("rounds")):
                     am = {"role": "assistant", "content": m.get("content") or ""}
-                    if m.get("reasoning") and PROF["passback"]: am[PROF["passback"]] = m["reasoning"]
+                    if m.get("reasoning") and PASSBACK_KEY(SRV, PROF): am[PASSBACK_KEY(SRV, PROF)] = m["reasoning"]
                     w.append(am)
             else: w.append({"role": m["role"], "content": m["content"]})
         return w
@@ -291,7 +294,8 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                 if d.get("usage"): usage = d["usage"]
                 ch = (d.get("choices") or [{}])[0]; de = ch.get("delta", {}) or {}
                 if ch.get("finish_reason"): finish = ch["finish_reason"]
-                if de.get("reasoning"): rtxt += de["reasoning"]; pending["reasoning"] = rtxt; rslot.markdown(rtxt)
+                rz = de.get("reasoning") or de.get("reasoning_content")          # vLLM: reasoning · llama-server: reasoning_content
+                if rz: rtxt += rz; pending["reasoning"] = rtxt; rslot.markdown(rtxt)
                 if de.get("content"):
                     if tfc is None: tfc = time.time()
                     ctxt += de["content"]; pending["content"] = ctxt; cslot.markdown(ctxt)
@@ -301,7 +305,7 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                     fn = tc.get("function") or {}
                     if fn.get("name"): c["name"] += fn["name"]
                     if fn.get("arguments"): c["args"] += fn["arguments"]
-                if first is None and (de.get("reasoning") or de.get("content") or de.get("tool_calls")): first = time.time()
+                if first is None and (rz or de.get("content") or de.get("tool_calls")): first = time.time()
         if first: stats["gen_s"] = stats.get("gen_s", 0) + (time.time() - first); stats["ct"] = stats.get("ct", 0) + (usage or {}).get("completion_tokens", 0)
         return rtxt, ctxt, [calls[k] for k in sorted(calls)], finish, usage, first, tfc
 
@@ -323,9 +327,12 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                 for c in calls:
                     try: args = json.loads(c["args"] or "{}")
                     except Exception: args = {"_raw": c["args"]}
+                    for k, v in TOOL_ARG_DEFAULTS.get(c["name"], {}).items(): args.setdefault(k, v)
                     round_rec["calls"].append({"id": c["id"], "name": c["name"], "args": args, "result": None})
                     with tools_slot.container(): render_tools(pending["rounds"] + [round_rec])      # show the call while it runs
-                    round_rec["calls"][-1]["result"] = ss.mcp.call(c["name"], args) if tools else "tools disabled"
+                    res = ss.mcp.call(c["name"], args) if tools else "tools disabled"
+                    if res and len(res) > TOOL_RESULT_MAX_CHARS: res = res[:TOOL_RESULT_MAX_CHARS] + f"\n\n[truncated: {len(res)} chars, showing the first {TOOL_RESULT_MAX_CHARS}]"
+                    round_rec["calls"][-1]["result"] = res
                 think_slot.empty(); cslot.empty()
                 last_calls = calls; pending["rounds"].append(round_rec); pending["reasoning"] = ""; pending["content"] = ""
                 with tools_slot.container(): render_tools(pending["rounds"])

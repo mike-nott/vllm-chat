@@ -4,7 +4,13 @@
 #   glm     → Reasoning effort Low/High/Max (chat_template_kwargs.reasoning_effort), prior reasoning passed back
 #   qwen    → Thinking on/off toggle        (chat_template_kwargs.enable_thinking),  prior reasoning passed back
 #   generic → plain OpenAI chat, no template kwargs
+# reasoning_key (optional): the field prior reasoning is passed back in, overriding the profile's default of
+#   "reasoning". llama-server wants "reasoning_content". Streaming reads either field, so this is only for passback.
 title = "vLLM"
+
+# Optional: cap how much of a tool result goes back to the model (default 12000 characters).
+# Prompt processing is the slow part on small boxes, so a long page fetch costs more than it is worth.
+# tool_result_max_chars = 12000
 
 [[servers]]
 name = "local"
@@ -15,6 +21,13 @@ base_url = "http://127.0.0.1:8000"
 # name = "GLM box"
 # base_url = "http://192.168.1.10:8000"
 # profile = "glm"
+
+# llama-server speaks the same OpenAI API but names the reasoning field differently:
+# [[servers]]
+# name = "llama-server box"
+# base_url = "http://192.168.1.11:8080"
+# profile = "qwen"
+# reasoning_key = "reasoning_content"
 
 # Optional: let the model call tools on an MCP server over Streamable HTTP (sidebar toggle "Web MCP", off by default).
 # Built for https://github.com/mike-nott/web-mcp but any bearer-token MCP endpoint with text tools works.

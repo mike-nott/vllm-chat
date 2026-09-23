@@ -6,8 +6,8 @@ no database, no accounts, nothing logged. Point it at `http://<host>:8000`, open
 ![light](docs/shot-light.png)
 
 Built for testing models on home inference boxes (DGX Spark, RTX rigs) where you want a quick, clean UI rather than a
-full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint; the extras (thinking level,
-cache-hit %) light up when the server is vLLM.
+full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint, llama-server included; the extras
+(thinking level, cache-hit %) light up when the server is vLLM.
 
 ## Features
 
@@ -49,6 +49,12 @@ profile = "glm"          # glm | qwen | generic — optional, guessed from the m
 [[servers]]
 name = "Qwen box"
 base_url = "http://192.168.1.11:8000"
+
+[[servers]]
+name = "llama-server box"
+base_url = "http://192.168.1.12:8080"
+profile = "qwen"
+reasoning_key = "reasoning_content"   # optional — see below
 ```
 
 | profile | sidebar control | what is sent |
@@ -56,6 +62,13 @@ base_url = "http://192.168.1.11:8000"
 | `glm` | Thinking level Low / High / Max | `chat_template_kwargs.reasoning_effort`, prior reasoning passed back as `reasoning` |
 | `qwen` | Thinking level Off / Low / Medium / XHigh | `chat_template_kwargs.enable_thinking` (Off = `false`) and `reasoning_effort` for the other levels, prior reasoning passed back |
 | `generic` | none | plain OpenAI chat |
+
+`reasoning_key` overrides the field prior reasoning is passed back in, which the profiles default to `reasoning`.
+llama-server expects `reasoning_content`. Incoming streams are read either way, so this is only about the passback.
+
+`tool_result_max_chars` at the top level caps how much of a tool result is fed back to the model (default 12000);
+anything longer is truncated with a note. Prompt processing is the slow part on small boxes, so a long page fetch
+costs more than it is worth.
 
 `servers.toml` is git-ignored, so `git pull` never overwrites it. The app re-reads it on every page load.
 
@@ -107,8 +120,11 @@ use one, lives in plain text in `servers.toml`, which is git-ignored for that re
 
 ## Troubleshooting
 
-- Red dot, "server unreachable": `curl <base_url>/v1/models` from the box running vllm-chat.
+- Red dot, "server offline": `curl <base_url>/v1/models` from the box running vllm-chat. An amber dot ("server
+  starting up") means the port is refusing connections or the model is still loading — give it a moment.
 - No Thinking level control: the profile was guessed as `generic`. Set `profile` explicitly.
+- Reasoning shows while streaming but the model loses it next turn: set `reasoning_key = "reasoning_content"` for
+  llama-server servers.
 - Web MCP toggle greyed out: no `[mcp]` section (hover it for the hint), or the profile is `generic`. "web-mcp unavailable": bad url or token.
 - Port 80 already in use: `PORT=8501 bash install.sh`.
 - Edits to `app.py` not showing: `watchdog` is not installed in the streamlit environment; install it and restart.
