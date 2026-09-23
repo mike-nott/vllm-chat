@@ -18,7 +18,8 @@ full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint,
 - Timing line per reply: time to first token, tok/s, prefix-cache hit % (from vLLM `/metrics`)
 - Raw view: the exact request JSON and response summary under each reply
 - Optional tool calling against any number of MCP servers ([web-mcp](https://github.com/mike-nott/web-mcp) for the
-  web, [comfy-mcp](https://github.com/mike-nott/comfy-mcp) for image and video generation); one sidebar toggle each, all off by default
+  web, [comfy-mcp](https://github.com/mike-nott/comfy-mcp) for image and video generation); one sidebar toggle each, all off by default.
+  Images a tool returns show as previews, and comfy-mcp's full-size results arrive as a Download button in the browser
 - Several servers in one instance with a sidebar picker; light and dark; a status dot that says whether the server is up
 - Zero persistence: conversation lives in the browser session only. Refresh to start over
 
