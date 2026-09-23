@@ -18,25 +18,32 @@ PROFILES = {                                  # what the model family understand
 }
 EFFORT_LABEL = {"xhigh": "XHigh"}             # display names where capitalize() is wrong
 PASSBACK_KEY = lambda srv, prof: srv.get("reasoning_key") or prof["passback"]   # servers.toml reasoning_key overrides the profile (llama-server: "reasoning_content")
-MCP_CFG = CFG.get("mcp")                      # optional [mcp] url + token → web tools, OFF by default
-MAX_TOOL_ROUNDS = 6
+def mcp_servers(cfg):
+    """[[mcp]] blocks, one sidebar toggle each. A legacy single [mcp] table still works."""
+    raw = cfg.get("mcp") or []
+    if isinstance(raw, dict): raw = [{"name": "Web-MCP", **raw}]
+    return [{**s, "name": s.get("name") or f"MCP {i + 1}"} for i, s in enumerate(raw)]
+MCP_SERVERS = mcp_servers(CFG)                # name, url, token, optional timeout and [mcp.tool_defaults.<tool>]
+MAX_TOOL_ROUNDS = int(CFG.get("max_tool_rounds", 10))                  # a video render polls wait_for_job across several rounds
 TOOL_RESULT_MAX_CHARS = int(CFG.get("tool_result_max_chars", 12000))   # cap what goes back to the model: prompt processing is the slow part on small boxes
-TOOL_ARG_DEFAULTS = {"fetch_page": {"max_chars": 10000}}               # per-tool defaults applied when the model omits them
+TOOL_ARG_DEFAULTS = {"fetch_page": {"max_chars": 10000}}               # per-tool defaults; servers.toml tool_defaults adds to these
 
 class MCP:
     """Minimal MCP Streamable-HTTP client (JSON or SSE responses)."""
-    def __init__(self, url, token):
+    def __init__(self, url, token, timeout=120):
         import itertools
-        self.url, self.n, self.sid = url, itertools.count(1), None
+        self.url, self.n, self.sid, self.timeout = url, itertools.count(1), None, timeout
         self.h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         self._rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "vllm-chat", "version": "1"}})
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
     def _post(self, payload):
         h = dict(self.h)
         if self.sid: h["Mcp-Session-Id"] = self.sid
-        r = requests.post(self.url, headers=h, data=json.dumps(payload), timeout=120); r.raise_for_status()
+        r = requests.post(self.url, headers=h, data=json.dumps(payload), timeout=(10, self.timeout)); r.raise_for_status()   # connect fast, then wait out the render
         self.sid = r.headers.get("Mcp-Session-Id", self.sid)
-        if r.headers.get("content-type", "").startswith("text/event-stream"):
+        ct = r.headers.get("content-type", "")
+        if "charset=" not in ct.lower(): r.encoding = "utf-8"       # requests reads a charset-less text/* as latin-1; MCP is always UTF-8
+        if ct.startswith("text/event-stream"):
             msgs = [json.loads(l[6:]) for l in r.text.splitlines() if l.startswith("data: ")]
             return next((m for m in reversed(msgs) if "result" in m or "error" in m), None)
         return r.json() if r.text.strip() else None
@@ -46,10 +53,14 @@ class MCP:
         return m["result"] if m else None
     def tools(self): return self._rpc("tools/list", {})["tools"]
     def call(self, name, args):
+        """→ (text for the model, image data URLs for the page). Image blocks are shown, not sent: the tool caller is rarely the vision model."""
         try:
             res = self._rpc("tools/call", {"name": name, "arguments": args})
-            return "\n".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text") or json.dumps(res)[:6000]
-        except Exception as e: return f"tool error: {e}"
+            content = res.get("content", [])
+            text = "\n".join(c.get("text", "") for c in content if c.get("type") == "text")
+            imgs = [f"data:{c.get('mimeType', 'image/png')};base64,{c['data']}" for c in content if c.get("type") == "image" and c.get("data")]
+            return (text or ("" if imgs else json.dumps(res)[:6000])), imgs
+        except Exception as e: return f"tool error: {e}", []
 
 def openai_tools(mcp_tools):
     return [{"type": "function", "function": {"name": t["name"], "description": t.get("description", "")[:1200],
@@ -67,7 +78,7 @@ st.set_page_config(page_title=CFG.get("title", "vLLM"), page_icon="⚡", layout=
 
 ss = st.session_state
 ss.setdefault("msgs", []); ss.setdefault("effort", None); ss.setdefault("temperature", 1.0); ss.setdefault("top_p", 0.95)   # effort: set per profile below
-ss.setdefault("max_tokens", 4096); ss.setdefault("show_meta", False); ss.setdefault("server", SERVERS[0]["name"]); ss.setdefault("thinking", True); ss.setdefault("system", ""); ss.setdefault("raw", False); ss.setdefault("tools_on", False)
+ss.setdefault("max_tokens", 4096); ss.setdefault("show_meta", False); ss.setdefault("server", SERVERS[0]["name"]); ss.setdefault("thinking", True); ss.setdefault("system", ""); ss.setdefault("raw", False); ss.setdefault("mcp_on", {}); ss.setdefault("mcp_pool", {})
 ss.setdefault("mode", "dark" if st.query_params.get("dark") else "light")
 
 LIGHT = dict(bg="#ffffff", side="#f7f7f8", text="#1f1f1f", muted="#8a8a8a", bubble="#f0f0f0", input="#ffffff", border="#e4e4e7", accent="#3f3f46", accent_fg="#ffffff", card="#ffffff", ctl="#9a9a9a")
@@ -185,11 +196,12 @@ with st.sidebar:
     ss.top_p = st.slider("Top-p", 0.1, 1.0, ss.top_p, 0.01)
     ss.show_meta = st.toggle("Show timing details", ss.show_meta)
     ss.raw = st.toggle("Raw view", ss.raw)
-    # Web MCP is always present; greyed out until it can work, with the reason in the tooltip.
-    mcp_ready = bool(MCP_CFG and MCP_CFG.get("url") and MCP_CFG.get("token"))
-    mcp_why = None if (mcp_ready and PROF["passback"]) else ("Add the Cloudflare secret to activate: an [mcp] section with url and token in servers.toml" if not mcp_ready else "Not available for the generic profile")
-    if mcp_why: ss.tools_on = False
-    ss.tools_on = st.toggle("Web MCP", ss.tools_on, disabled=bool(mcp_why), help=mcp_why)
+    # One toggle per [[mcp]] server, all off by default and greyed out until they can work, with the reason in the tooltip.
+    no_cfg = "Add an [[mcp]] block with name, url and token to servers.toml"
+    for m in MCP_SERVERS or [{"name": "Web-MCP"}]:
+        why = no_cfg if not (m.get("url") and m.get("token")) else (None if PROF["passback"] else "Not available for the generic profile")
+        if why: ss.mcp_on[m["name"]] = False
+        ss.mcp_on[m["name"]] = st.toggle(m["name"], ss.mcp_on.get(m["name"], False), disabled=bool(why), help=why, key=f"mcp_{m['name']}")
     mode = st.segmented_control("Appearance", ["light", "dark"], default=ss.mode, key="mode_ctl",
                                 format_func=lambda m: ":material/light_mode:" if m == "light" else ":material/dark_mode:", label_visibility="collapsed")
     if mode and mode != ss.mode: ss.mode = mode; st.rerun()
@@ -215,6 +227,9 @@ def render_tools(rounds):
     n = sum(len(r.get("calls", [])) for r in rounds)
     if n:
         with st.expander(f"Tools · {n} call{'s' if n > 1 else ''}", expanded=False): st.markdown(tools_html(rounds), unsafe_allow_html=True)
+    for r in rounds:                                  # media a tool returned (comfy-mcp previews) belongs in the conversation, not inside the expander
+        for c in r.get("calls", []):
+            for src in c.get("images") or []: st.image(src, width=360)
 
 for m in ss.msgs:
     with st.chat_message(m["role"]):
@@ -246,12 +261,20 @@ if sub:
     kw = {}
     if PROF["effort"] and ss.effort != "off": kw["reasoning_effort"] = ss.effort
     if PROF["thinking_toggle"]: kw["enable_thinking"] = ss.thinking       # a real JSON boolean; the string "false" would leave thinking ON
-    tools = None
-    if ss.tools_on and MCP_CFG:
+    tools, dispatch = [], {}          # every enabled server's tools in one list; dispatch maps a tool name to its client and arg defaults
+    for m in MCP_SERVERS:
+        if not ss.mcp_on.get(m["name"]): continue
         try:
-            if "mcp" not in ss: ss.mcp = MCP(MCP_CFG["url"], MCP_CFG["token"]); ss.mcp_tools = openai_tools(ss.mcp.tools())
-            tools = ss.mcp_tools
-        except Exception as e: st.warning(f"web-mcp unavailable: {e}"); tools = None
+            cli = ss.mcp_pool.get(m["name"])
+            if cli is None: cli = ss.mcp_pool[m["name"]] = MCP(m["url"], m["token"], int(m.get("timeout", 120)))
+            if not hasattr(cli, "listed"): cli.listed = openai_tools(cli.tools())
+            for t in cli.listed:
+                name = t["function"]["name"]
+                if name in dispatch: continue                                  # first server named in servers.toml wins a clash
+                dispatch[name] = (cli, {**TOOL_ARG_DEFAULTS.get(name, {}), **(m.get("tool_defaults") or {}).get(name, {})})
+                tools.append(t)
+        except Exception as e: ss.mcp_pool.pop(m["name"], None); st.warning(f"{m['name']} unavailable: {e}")
+    tools = tools or None
 
     h0, q0 = cache_counters(BASE)
     stop_slot = st.empty()
@@ -327,12 +350,13 @@ place();const t=setInterval(place,250);setTimeout(()=>clearInterval(t),1800000);
                 for c in calls:
                     try: args = json.loads(c["args"] or "{}")
                     except Exception: args = {"_raw": c["args"]}
-                    for k, v in TOOL_ARG_DEFAULTS.get(c["name"], {}).items(): args.setdefault(k, v)
+                    cli, argdef = dispatch.get(c["name"], (None, {}))
+                    for k, v in argdef.items(): args.setdefault(k, v)
                     round_rec["calls"].append({"id": c["id"], "name": c["name"], "args": args, "result": None})
                     with tools_slot.container(): render_tools(pending["rounds"] + [round_rec])      # show the call while it runs
-                    res = ss.mcp.call(c["name"], args) if tools else "tools disabled"
+                    res, imgs = cli.call(c["name"], args) if cli else (f"tool error: no MCP server offers {c['name']}", [])
                     if res and len(res) > TOOL_RESULT_MAX_CHARS: res = res[:TOOL_RESULT_MAX_CHARS] + f"\n\n[truncated: {len(res)} chars, showing the first {TOOL_RESULT_MAX_CHARS}]"
-                    round_rec["calls"][-1]["result"] = res
+                    round_rec["calls"][-1].update(result=res, images=imgs)
                 think_slot.empty(); cslot.empty()
                 last_calls = calls; pending["rounds"].append(round_rec); pending["reasoning"] = ""; pending["content"] = ""
                 with tools_slot.container(): render_tools(pending["rounds"])

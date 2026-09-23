@@ -12,6 +12,10 @@ title = "vLLM"
 # Prompt processing is the slow part on small boxes, so a long page fetch costs more than it is worth.
 # tool_result_max_chars = 12000
 
+# Optional: how many tool rounds one reply may take (default 10). A video render polls wait_for_job
+# over several rounds, so lower it only if you want tools kept on a short leash.
+# max_tool_rounds = 10
+
 [[servers]]
 name = "local"
 base_url = "http://127.0.0.1:8000"
@@ -29,8 +33,21 @@ base_url = "http://127.0.0.1:8000"
 # profile = "qwen"
 # reasoning_key = "reasoning_content"
 
-# Optional: let the model call tools on an MCP server over Streamable HTTP (sidebar toggle "Web MCP", off by default).
-# Built for https://github.com/mike-nott/web-mcp but any bearer-token MCP endpoint with text tools works.
-# [mcp]
+# Optional: MCP tool servers over Streamable HTTP. One [[mcp]] block per server, one sidebar toggle each,
+# all off by default. Any bearer-token MCP endpoint works; these two are what it was built against.
+# name is the toggle label. timeout (seconds, default 120) is how long one tool call may take.
+# [[mcp]]
+# name = "Web-MCP"                     # https://github.com/mike-nott/web-mcp — search, Reddit, X, YouTube, page fetch
 # url = "https://your-worker.example.workers.dev/mcp"
 # token = "your-bearer-token"
+
+# [[mcp]]
+# name = "Comfy-MCP"                   # https://github.com/mike-nott/comfy-mcp — image and video generation
+# url = "http://127.0.0.1:8765/mcp"    # run: COMFY_MCP_HTTP_TOKEN=... comfy-mcp --http
+# token = "your-bearer-token"
+# timeout = 300                        # an image is 20-60 s; video hands back a job id to poll instead
+
+# Optional per-tool argument defaults, applied when the model leaves them out. Attaches to the
+# [[mcp]] block above it.
+# [mcp.tool_defaults.generate_image]
+# steps = 20

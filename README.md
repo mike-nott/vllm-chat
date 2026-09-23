@@ -17,7 +17,8 @@ full platform. Works with any OpenAI-compatible `/v1/chat/completions` endpoint,
 - Max tokens, temperature, top-p, optional system prompt
 - Timing line per reply: time to first token, tok/s, prefix-cache hit % (from vLLM `/metrics`)
 - Raw view: the exact request JSON and response summary under each reply
-- Optional tool calling against an MCP server (built for [web-mcp](https://github.com/mike-nott/web-mcp)); off by default
+- Optional tool calling against any number of MCP servers ([web-mcp](https://github.com/mike-nott/web-mcp) for the
+  web, [comfy-mcp](https://github.com/mike-nott/comfy-mcp) for image and video generation); one sidebar toggle each, all off by default
 - Several servers in one instance with a sidebar picker; light and dark; a status dot that says whether the server is up
 - Zero persistence: conversation lives in the browser session only. Refresh to start over
 
@@ -85,21 +86,40 @@ Installs streamlit (via `uv` if present, else `pip --user`), creates `servers.to
 
 ## Tools (MCP)
 
-Add to `servers.toml`:
+One `[[mcp]]` block per server in `servers.toml`, each with its own sidebar toggle named after it:
 
 ```toml
-[mcp]
+[[mcp]]
+name = "Web-MCP"
 url = "https://your-worker.example.workers.dev/mcp"
 token = "your-bearer-token"
+
+[[mcp]]
+name = "Comfy-MCP"
+url = "http://127.0.0.1:8765/mcp"
+token = "your-bearer-token"
+timeout = 300                  # seconds one tool call may take; default 120
+
+[mcp.tool_defaults.generate_image]
+steps = 20                     # filled in when the model omits the argument
 ```
 
-The **Web MCP** toggle is always in the sidebar, off by default. Without an `[mcp]` section it is greyed out with a
-tooltip saying what to add; it also stays greyed out for the `generic` profile. When on, the server's tools are
-passed as OpenAI `tools` with `tool_choice: auto`; streamed tool calls are executed over MCP Streamable HTTP and fed
-back as `role: tool` messages, up to 6 rounds. Every call, its arguments and its result sit in one collapsed
-**Tools · N calls** row above the reply. Any MCP endpoint that speaks Streamable HTTP with bearer auth and returns text
-content should work; [web-mcp](https://github.com/mike-nott/web-mcp) (Reddit, X, YouTube, web search, page fetch) is
-what it was built against.
+Every toggle starts off. One with no `url`/`token` is greyed out with a tooltip saying what to add, and they all stay
+greyed out for the `generic` profile. Turn on as many as you like: their tools are merged into one list and passed as
+OpenAI `tools` with `tool_choice: auto`, and if two servers export the same tool name the one listed first in
+`servers.toml` wins. Streamed tool calls go back over MCP Streamable HTTP as `role: tool` messages, up to
+`max_tool_rounds` rounds (default 10 — a video render polls `wait_for_job` over several of them). Every call, its
+arguments and its result sit in one collapsed **Tools · N calls** row above the reply.
+
+Tool results that carry images — a [comfy-mcp](https://github.com/mike-nott/comfy-mcp) render, say — show up as
+previews under that row. They are displayed, not sent back to the model: the model gets the text part, which for
+comfy-mcp includes the path the full-size file was saved to **on the machine running the MCP server**.
+
+Two servers it was built against: [web-mcp](https://github.com/mike-nott/web-mcp) (Reddit, X, YouTube, web search,
+page fetch) and [comfy-mcp](https://github.com/mike-nott/comfy-mcp) (Qwen Image 2.1, MiniMax H3 video), the latter
+started with `COMFY_MCP_HTTP_TOKEN=... comfy-mcp --http`. Any Streamable HTTP endpoint with bearer auth works.
+
+A single legacy `[mcp]` table still works and shows up as **Web-MCP**.
 
 ## Privacy
 
@@ -125,7 +145,10 @@ use one, lives in plain text in `servers.toml`, which is git-ignored for that re
 - No Thinking level control: the profile was guessed as `generic`. Set `profile` explicitly.
 - Reasoning shows while streaming but the model loses it next turn: set `reasoning_key = "reasoning_content"` for
   llama-server servers.
-- Web MCP toggle greyed out: no `[mcp]` section (hover it for the hint), or the profile is `generic`. "web-mcp unavailable": bad url or token.
+- An MCP toggle greyed out: that `[[mcp]]` block has no url or token (hover it for the hint), or the profile is
+  `generic`. "<name> unavailable": bad url or token, or the server is not running.
+- A tool call times out: raise `timeout` on that `[[mcp]]` block. Long renders should be started with a tool that
+  returns a job id and polled instead.
 - Port 80 already in use: `PORT=8501 bash install.sh`.
 - Edits to `app.py` not showing: `watchdog` is not installed in the streamlit environment; install it and restart.
 
